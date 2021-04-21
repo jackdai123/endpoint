@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"time"
+	"syscall"
 )
 
 type EndPointConfig interface{}
