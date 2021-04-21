@@ -1,4 +1,4 @@
-module endpoint
+module github.com/jackdai123/endpoint
 
 go 1.14
 
