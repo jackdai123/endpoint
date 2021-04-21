@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"time"
+	"sync"
 	"syscall"
+	"time"
 )
-
-type EndPointConfig interface{}
 
 //Endpoint类型
 type EndPointType int
@@ -19,6 +18,12 @@ const (
 	EndPointUDP
 	EndPointSerial
 )
+
+//EndPoint配置基类
+type EndPointConfig interface {
+	Type() EndPointType  //返回Endpoint类型
+	AddressName() string //以字符串形式返回网口或串口的地址
+}
 
 //串口和网口的基类
 type EndPoint interface {
@@ -31,41 +36,61 @@ type EndPoint interface {
 	SockAddr() syscall.Sockaddr //返回网口或串口的socket地址
 }
 
-//打开串口或网口
-func Open(c EndPointConfig) (p EndPoint, err error) {
-	switch c.(type) {
-	case *SerialConfig:
-		if _, ok := c.(*SerialConfig); ok {
-			p = newSerial()
-			err = p.Open(c)
+//打开串口或网口，并注册到sync.map（key是网络地址、串口文件路径，value是[]EndPoint切片）
+func Open(c EndPointConfig, m *sync.Map) (p EndPoint, err error) {
+	p = newEndPoint(c)
+	if c.Type() == EndPointSerial { //串口
+		if _, ok := m.Load(c.AddressName()); ok { // 重复打开串口不可以
+			err = fmt.Errorf("opening serial repeated is unsupported")
 		} else {
-			err = fmt.Errorf("type convert to SerialConfig failed")
+			if err = p.Open(c); err == nil {
+				m.Store(c.AddressName(), []EndPoint{p})
+			}
 		}
-	case *TCPConfig:
-		if _, ok := c.(*TCPConfig); ok {
-			p = newTCP()
-			err = p.Open(c)
-		} else {
-			err = fmt.Errorf("type convert to TCPConfig failed")
+	} else { //网口和UnixSocket
+		if err = p.Open(c); err == nil {
+			if s, ok := m.Load(c.AddressName()); ok { // 网络可以重复打开
+				slice := s.([]EndPoint)
+				slice = append(slice, p)
+				m.Store(c.AddressName(), slice)
+			} else {
+				m.Store(c.AddressName(), []EndPoint{p})
+			}
 		}
-	case *UDPConfig:
-		if _, ok := c.(*UDPConfig); ok {
-			p = newUDP()
-			err = p.Open(c)
-		} else {
-			err = fmt.Errorf("type convert to UDPConfig failed")
-		}
-	case *UnixSocketConfig:
-		if _, ok := c.(*UnixSocketConfig); ok {
-			p = newUnixSocket()
-			err = p.Open(c)
-		} else {
-			err = fmt.Errorf("type convert to UnixSocketConfig failed")
-		}
-	default:
-		err = fmt.Errorf("wrong type of config")
 	}
 	return
+}
+
+//查找已打开的EndPoint
+func Find(c EndPointConfig, m *sync.Map) (slice []EndPoint, find bool) {
+	if s, ok := m.Load(c.AddressName()); ok {
+		slice = s.([]EndPoint)
+		find = true
+	} else {
+		find = false
+	}
+	return
+}
+
+//删除已打开的EndPoint
+func Delete(c EndPointConfig, m *sync.Map) {
+	m.Delete(c.AddressName())
+}
+
+//初始化EndPoint
+func newEndPoint(c EndPointConfig) EndPoint {
+	switch c.Type() {
+	case EndPointTCP:
+		return newTCP()
+	case EndPointUDP:
+		return newUDP()
+	case EndPointUnix:
+		return newUnixSocket()
+	case EndPointSerial:
+		return newSerial()
+	default:
+		return nil
+	}
 }
 
 //校验模式
@@ -128,4 +153,36 @@ type UDPConfig struct {
 type UnixSocketConfig struct {
 	Network string //UnixSocket网络类型（unix）
 	Address string //UnixSocket文件路径，比如/tmp/a.sock
+}
+
+func (c *SerialConfig) Type() EndPointType {
+	return EndPointSerial
+}
+
+func (c *SerialConfig) AddressName() string {
+	return c.Address
+}
+
+func (c *TCPConfig) Type() EndPointType {
+	return EndPointTCP
+}
+
+func (c *TCPConfig) AddressName() string {
+	return c.Address
+}
+
+func (c *UDPConfig) Type() EndPointType {
+	return EndPointUDP
+}
+
+func (c *UDPConfig) AddressName() string {
+	return c.Address
+}
+
+func (c *UnixSocketConfig) Type() EndPointType {
+	return EndPointUnix
+}
+
+func (c *UnixSocketConfig) AddressName() string {
+	return c.Address
 }
