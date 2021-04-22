@@ -1,10 +1,8 @@
 package endpoint
 
 import (
-	"fmt"
 	"io"
 	"net"
-	"sync"
 	"syscall"
 	"time"
 )
@@ -36,45 +34,11 @@ type EndPoint interface {
 	SockAddr() syscall.Sockaddr //返回网口或串口的socket地址
 }
 
-//打开串口或网口，并注册到sync.map（key是网络地址、串口文件路径，value是[]EndPoint切片）
-func Open(c EndPointConfig, m *sync.Map) (p EndPoint, err error) {
+//打开串口或网口
+func Open(c EndPointConfig) (p EndPoint, err error) {
 	p = newEndPoint(c)
-	if c.Type() == EndPointSerial { //串口
-		if _, ok := m.Load(c.AddressName()); ok { // 重复打开串口不可以
-			err = fmt.Errorf("opening serial repeated is unsupported")
-		} else {
-			if err = p.Open(c); err == nil {
-				m.Store(c.AddressName(), []EndPoint{p})
-			}
-		}
-	} else { //网口和UnixSocket
-		if err = p.Open(c); err == nil {
-			if s, ok := m.Load(c.AddressName()); ok { // 网络可以重复打开
-				slice := s.([]EndPoint)
-				slice = append(slice, p)
-				m.Store(c.AddressName(), slice)
-			} else {
-				m.Store(c.AddressName(), []EndPoint{p})
-			}
-		}
-	}
+	err = p.Open(c)
 	return
-}
-
-//查找已打开的EndPoint
-func Find(c EndPointConfig, m *sync.Map) (slice []EndPoint, find bool) {
-	if s, ok := m.Load(c.AddressName()); ok {
-		slice = s.([]EndPoint)
-		find = true
-	} else {
-		find = false
-	}
-	return
-}
-
-//删除已打开的EndPoint
-func Delete(c EndPointConfig, m *sync.Map) {
-	m.Delete(c.AddressName())
 }
 
 //初始化EndPoint
