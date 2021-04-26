@@ -5,13 +5,16 @@ import (
 	"net"
 	"os"
 	"syscall"
+	"time"
 )
 
 //tcp实现EndPoint接口
 type tcp struct {
-	fd       int              //套接字文件描述符
-	netAddr  *net.TCPAddr     //目标TCP的网络地址
-	sockAddr syscall.Sockaddr //目标TCP的socket地址
+	fd           int              //套接字文件描述符
+	netAddr      *net.TCPAddr     //目标TCP的网络地址
+	sockAddr     syscall.Sockaddr //目标TCP的socket地址
+	readTimeout  time.Duration    //一次完全数据包的收取超时
+	writeTimeout time.Duration    //一次完整数据包的发送超时
 }
 
 //创建tcp对象
@@ -55,6 +58,14 @@ func (p *tcp) Open(config EndPointConfig) (err error) {
 		return
 	}
 
+	//设置读写超时
+	if c.ReadTimeout > 0 {
+		p.readTimeout = c.ReadTimeout
+	}
+	if c.WriteTimeout > 0 {
+		p.writeTimeout = c.WriteTimeout
+	}
+
 	return
 }
 
@@ -95,6 +106,16 @@ func (p *tcp) Flush() error {
 //返回TCP网络地址
 func (p *tcp) NetAddr() net.Addr {
 	return p.netAddr
+}
+
+//返回读超时
+func (p *tcp) ReadTimeout() time.Duration {
+	return p.readTimeout
+}
+
+//返回写超时
+func (p *tcp) WriteTimeout() time.Duration {
+	return p.writeTimeout
 }
 
 //返回TCP的socket地址

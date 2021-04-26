@@ -26,12 +26,14 @@ type EndPointConfig interface {
 //串口和网口的基类
 type EndPoint interface {
 	io.ReadWriteCloser
-	Open(EndPointConfig) error  //打开网口或串口
-	Type() EndPointType         //返回Endpoint类型
-	Fd() int                    //返回网口或串口的文件句柄
-	Flush() error               //清理缓冲区的数据
-	NetAddr() net.Addr          //返回网口或串口的网络地址
-	SockAddr() syscall.Sockaddr //返回网口或串口的socket地址
+	Open(EndPointConfig) error   //打开网口或串口
+	Type() EndPointType          //返回Endpoint类型
+	Fd() int                     //返回网口或串口的文件句柄
+	Flush() error                //清理缓冲区的数据
+	NetAddr() net.Addr           //返回网口或串口的网络地址
+	SockAddr() syscall.Sockaddr  //返回网口或串口的socket地址
+	ReadTimeout() time.Duration  //一次完整数据包读取超时
+	WriteTimeout() time.Duration //一次完整数据包发送超时
 }
 
 //打开串口或网口
@@ -70,15 +72,14 @@ const (
 
 //串口配置
 type SerialConfig struct {
-	Address         string        //串口路径，比如/dev/ttyS0
-	BaudRate        int           //波特率，默认值9600
-	DataBits        int           //数据位长度（5、6、7、8），默认8
-	StopBits        int           //停止位长度（1、2），默认1
-	Parity          ParityMode    //校验模式
-	FirstRecTimeout time.Duration //第一次收到数据的超时
-	NextRecTimeout  time.Duration //后续收到数据的间隔超时
-	SendTimeout     time.Duration //发送数据的间隔超时
-	RS485           RS485Config   //RS485配置
+	Address      string        //串口路径，比如/dev/ttyS0
+	BaudRate     int           //波特率，默认值9600
+	DataBits     int           //数据位长度（5、6、7、8），默认8
+	StopBits     int           //停止位长度（1、2），默认1
+	Parity       ParityMode    //校验模式
+	ReadTimeout  time.Duration //一次完全数据包的收取超时
+	WriteTimeout time.Duration //一次完整数据包的发送超时
+	RS485        RS485Config   //RS485配置
 }
 
 //RS485配置
@@ -101,22 +102,28 @@ const (
 
 //TCP配置
 type TCPConfig struct {
-	Network   string        //TCP网络类型（tcp、tcp4、tcp6）
-	Address   string        //主机地址，比如192.168.1.1:8080
-	KeepAlive time.Duration //TCP保活周期，如果不启用则配0
-	NoDelay   TCPSocketOpt  //TCP数据延迟发送，默认no delay
+	Network      string        //TCP网络类型（tcp、tcp4、tcp6）
+	Address      string        //主机地址，比如192.168.1.1:8080
+	KeepAlive    time.Duration //TCP保活周期，如果不启用则配0
+	NoDelay      TCPSocketOpt  //TCP数据延迟发送，默认no delay
+	ReadTimeout  time.Duration //一次完全数据包的收取超时
+	WriteTimeout time.Duration //一次完整数据包的发送超时
 }
 
 //UDP配置
 type UDPConfig struct {
-	Network string //UDP网络类型（udp、udp4、udp6）
-	Address string //主机地址，比如192.168.1.1:8080
+	Network      string        //UDP网络类型（udp、udp4、udp6）
+	Address      string        //主机地址，比如192.168.1.1:8080
+	ReadTimeout  time.Duration //一次完全数据包的收取超时
+	WriteTimeout time.Duration //一次完整数据包的发送超时
 }
 
 //UnixSocket配置
 type UnixSocketConfig struct {
-	Network string //UnixSocket网络类型（unix）
-	Address string //UnixSocket文件路径，比如/tmp/a.sock
+	Network      string        //UnixSocket网络类型（unix）
+	Address      string        //UnixSocket文件路径，比如/tmp/a.sock
+	ReadTimeout  time.Duration //一次完全数据包的收取超时
+	WriteTimeout time.Duration //一次完整数据包的发送超时
 }
 
 func (c *SerialConfig) Type() EndPointType {

@@ -4,13 +4,16 @@ import (
 	"fmt"
 	"net"
 	"syscall"
+	"time"
 )
 
 //udp实现EndPoint接口
 type udp struct {
-	fd       int              //套接字文件描述符
-	netAddr  *net.UDPAddr     //目标UDP的网络地址
-	sockAddr syscall.Sockaddr //目标UDP的socket地址
+	fd           int              //套接字文件描述符
+	netAddr      *net.UDPAddr     //目标UDP的网络地址
+	sockAddr     syscall.Sockaddr //目标UDP的socket地址
+	readTimeout  time.Duration    //一次完全数据包的收取超时
+	writeTimeout time.Duration    //一次完整数据包的发送超时
 }
 
 //创建udp对象
@@ -36,6 +39,14 @@ func (p *udp) Open(config EndPointConfig) (err error) {
 	if p.fd, err = sysSocket(family, syscall.SOCK_DGRAM, syscall.IPPROTO_UDP); err != nil {
 		err = fmt.Errorf("udp: sysSocket: %v", err)
 		return
+	}
+
+	//设置读写超时
+	if c.ReadTimeout > 0 {
+		p.readTimeout = c.ReadTimeout
+	}
+	if c.WriteTimeout > 0 {
+		p.writeTimeout = c.WriteTimeout
 	}
 
 	return
@@ -84,6 +95,16 @@ func (p *udp) NetAddr() net.Addr {
 //返回UDP的socket地址
 func (p *udp) SockAddr() syscall.Sockaddr {
 	return p.sockAddr
+}
+
+//返回读超时
+func (p *udp) ReadTimeout() time.Duration {
+	return p.readTimeout
+}
+
+//返回写超时
+func (p *udp) WriteTimeout() time.Duration {
+	return p.writeTimeout
 }
 
 //解析UDP地址

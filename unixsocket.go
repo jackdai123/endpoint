@@ -5,13 +5,16 @@ import (
 	"net"
 	"os"
 	"syscall"
+	"time"
 )
 
 //unixsocket实现EndPoint接口
 type unixsocket struct {
-	fd       int              //套接字文件描述符
-	netAddr  *net.UnixAddr    //目标UnixSocket的网络地址
-	sockAddr syscall.Sockaddr //目标UnixSocket的socket地址
+	fd           int              //套接字文件描述符
+	netAddr      *net.UnixAddr    //目标UnixSocket的网络地址
+	sockAddr     syscall.Sockaddr //目标UnixSocket的socket地址
+	readTimeout  time.Duration    //一次完全数据包的收取超时
+	writeTimeout time.Duration    //一次完整数据包的发送超时
 }
 
 //创建unixsocket对象
@@ -43,6 +46,14 @@ func (p *unixsocket) Open(config EndPointConfig) (err error) {
 	if err = syscall.Connect(p.fd, p.sockAddr); err != nil {
 		err = fmt.Errorf("tcp: Connect: %v", os.NewSyscallError("connect", err))
 		return
+	}
+
+	//设置读写超时
+	if c.ReadTimeout > 0 {
+		p.readTimeout = c.ReadTimeout
+	}
+	if c.WriteTimeout > 0 {
+		p.writeTimeout = c.WriteTimeout
 	}
 
 	return
@@ -90,6 +101,16 @@ func (p *unixsocket) NetAddr() net.Addr {
 //返回UnixSocket的socket地址
 func (p *unixsocket) SockAddr() syscall.Sockaddr {
 	return p.SockAddr()
+}
+
+//返回读超时
+func (p *unixsocket) ReadTimeout() time.Duration {
+	return p.readTimeout
+}
+
+//返回写超时
+func (p *unixsocket) WriteTimeout() time.Duration {
+	return p.writeTimeout
 }
 
 //解析UnixSocket地址

@@ -17,12 +17,11 @@ import (
 
 //serial实现EndPoint接口
 type serial struct {
-	fd              int              //串口文件描述符
-	address         string           //串口文件路径
-	oldTermios      *syscall.Termios //终端配置（波特率、数据位、停止位、校验位等）
-	firstRecTimeout time.Duration    //发包后第一次收到数据的超时
-	nextRecTimeout  time.Duration    //后续收到数据的间隔超时
-	sendTimeout     time.Duration    //发送数据的间隔超时
+	fd           int              //串口文件描述符
+	address      string           //串口文件路径
+	oldTermios   *syscall.Termios //终端配置（波特率、数据位、停止位、校验位等）
+	readTimeout  time.Duration    //一次完全数据包的收取超时
+	writeTimeout time.Duration    //一次完整数据包的发送超时
 }
 
 //RS485相关常量
@@ -52,17 +51,26 @@ func (p *serial) Open(config EndPointConfig) (err error) {
 	c := config.(*SerialConfig)
 	p.address = c.Address
 
-	termios, err := newTermios(c)
-	if err != nil {
-		return
-	}
-
 	// See man termios(3).
 	// O_NOCTTY: no controlling terminal.
 	// O_NDELAY: no data carrier detect.
 	p.fd, err = syscall.Open(c.Address, syscall.O_RDWR|syscall.O_NOCTTY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0666)
-	if err != nil {
+	switch err {
+	case nil:
+	case syscall.EINTR:
+		// Recurse because this is a recoverable error.
+		p.Open(config)
+		return
+	case syscall.ENFILE, syscall.EMFILE:
+		err = fmt.Errorf("serial: open serial %v: %v (too many file opened)", c.Address, err)
+		return
+	default:
 		err = fmt.Errorf("serial: open serial %v: %v", c.Address, err)
+		return
+	}
+
+	termios, err := newTermios(c)
+	if err != nil {
 		return
 	}
 
@@ -83,20 +91,15 @@ func (p *serial) Open(config EndPointConfig) (err error) {
 	}
 
 	//设置读写超时
-	if c.FirstRecTimeout > 0 {
-		p.firstRecTimeout = c.FirstRecTimeout
+	if c.ReadTimeout > 0 {
+		p.readTimeout = c.ReadTimeout
 	} else {
-		p.firstRecTimeout = 300 * time.Millisecond //默认第一次接收超时300ms
+		p.readTimeout = 5000 * time.Millisecond //默认读超时5000ms
 	}
-	if c.NextRecTimeout > 0 {
-		p.nextRecTimeout = c.NextRecTimeout
+	if c.WriteTimeout > 0 {
+		p.writeTimeout = c.WriteTimeout
 	} else {
-		p.nextRecTimeout = 50 * time.Millisecond //默认后续接收间隔超时50ms
-	}
-	if c.SendTimeout > 0 {
-		p.sendTimeout = c.SendTimeout
-	} else {
-		p.sendTimeout = 50 * time.Millisecond //默认发送间隔超时50ms
+		p.writeTimeout = 1000 * time.Millisecond //默认写超时1000ms
 	}
 	return
 }
@@ -121,38 +124,38 @@ func (p *serial) Close() (err error) {
 //读取串口，直到所有数据收完或者超时
 func (p *serial) Read(b []byte) (n int, err error) {
 	var rfds syscall.FdSet
-	var tv, nextTV *syscall.Timeval
 	var readLen, nFd int
 	var hasData bool
 
 	fd := p.fd
-	fdset(fd, &rfds)
+	expireTime := time.Now().Add(p.readTimeout)
 
-	timeout1 := syscall.NsecToTimeval(p.firstRecTimeout.Nanoseconds())
-	tv = &timeout1
-	timeout2 := syscall.NsecToTimeval(p.nextRecTimeout.Nanoseconds())
-	nextTV = &timeout2
+	for { //如遇到EINTR（Interrupted system call）错误，重试
+		remainTime := expireTime.Sub(time.Now())
+		if remainTime <= 0 { //超时
+			err = fmt.Errorf("serial: select timeout: %v", p.readTimeout)
+			return
+		}
 
-	for {
-		//如遇到EINTR（Interrupted system call）错误，重试
-		nFd, err = syscall.Select(fd+1, &rfds, nil, nil, tv)
+		fdzero(&rfds)
+		fdset(fd, &rfds)
+		timeout := syscall.NsecToTimeval(remainTime.Nanoseconds()) //设置select超时时间
+		nFd, err = syscall.Select(fd+1, &rfds, nil, nil, &timeout)
 		if err == nil {
 			if nFd == 0 || !fdisset(fd, &rfds) {
 				if hasData { //之前读到数据，此处无法判断数据包是否完整，交给上层判断
 					return readLen, nil
 				} else { //超时
-					err = fmt.Errorf("serial: select timeout: %v", tv)
+					err = fmt.Errorf("serial: select timeout: %v", p.readTimeout)
 					return
 				}
 			}
+
 			n, err = syscall.Read(fd, b[readLen:])
 			if err == nil {
 				if n > 0 { //读取数据，继续监听串口，是否还有后续数据
 					hasData = true
 					readLen += n
-					fdzero(&rfds)
-					fdset(fd, &rfds)
-					tv = nextTV
 				} else { //有IO事件但读不到数据，异常
 					err = fmt.Errorf("serial: read no data")
 					return
@@ -172,10 +175,8 @@ func (p *serial) Read(b []byte) (n int, err error) {
 func (p *serial) Write(b []byte) (n int, err error) {
 	var writeLen, nFd int
 	var wfds syscall.FdSet
-	var tv *syscall.Timeval
 
-	timeout := syscall.NsecToTimeval(p.sendTimeout.Nanoseconds())
-	tv = &timeout
+	expireTime := time.Now().Add(p.writeTimeout)
 	bLen := len(b)
 	fd := p.fd
 
@@ -191,12 +192,19 @@ func (p *serial) Write(b []byte) (n int, err error) {
 			}
 
 			for { //没发完数据，等IO可写，继续发送
+				remainTime := expireTime.Sub(time.Now())
+				if remainTime <= 0 { //超时
+					err = fmt.Errorf("serial: select timeout: %v", p.writeTimeout)
+					return
+				}
+
 				fdzero(&wfds)
 				fdset(fd, &wfds)
-				nFd, err = syscall.Select(fd+1, nil, &wfds, nil, tv)
+				timeout := syscall.NsecToTimeval(remainTime.Nanoseconds()) //设置select超时时间
+				nFd, err = syscall.Select(fd+1, nil, &wfds, nil, &timeout)
 				if err == nil {
 					if nFd == 0 || !fdisset(fd, &wfds) { //超时
-						err = fmt.Errorf("serial: select timeout: %v", tv)
+						err = fmt.Errorf("serial: select timeout: %v", p.writeTimeout)
 						return
 					}
 
@@ -243,6 +251,16 @@ func (p *serial) NetAddr() net.Addr {
 //返回串口的socket地址
 func (p *serial) SockAddr() syscall.Sockaddr {
 	return nil
+}
+
+//返回读超时
+func (p *serial) ReadTimeout() time.Duration {
+	return p.readTimeout
+}
+
+//返回写超时
+func (p *serial) WriteTimeout() time.Duration {
+	return p.writeTimeout
 }
 
 //设置终端配置
