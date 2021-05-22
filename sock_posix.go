@@ -8,7 +8,7 @@ import (
 )
 
 func sysSocket(family, sotype, proto int) (int, error) {
-	s, err := syscall.Socket(family, sotype|syscall.SOCK_NONBLOCK|syscall.SOCK_CLOEXEC, proto)
+	s, err := syscall.Socket(family, sotype|syscall.SOCK_CLOEXEC, proto)
 
 	// On Linux the SOCK_NONBLOCK and SOCK_CLOEXEC flags were
 	// introduced in 2.6.27 kernel and on FreeBSD both flags were
@@ -34,9 +34,5 @@ func sysSocket(family, sotype, proto int) (int, error) {
 		return -1, os.NewSyscallError("socket", err)
 	}
 
-	if err = syscall.SetNonblock(s, true); err != nil {
-		syscall.Close(s)
-		return -1, os.NewSyscallError("setnonblock", err)
-	}
 	return s, nil
 }

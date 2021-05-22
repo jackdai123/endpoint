@@ -44,17 +44,27 @@ func (p *tcp) Open(config EndPointConfig) (err error) {
 
 	//设置NoDelay和KeepAlive选项
 	if err = setNoDelay(p.fd, c.NoDelay); err != nil {
+		syscall.Close(p.fd)
 		err = fmt.Errorf("tcp: setNoDelay: %v", err)
 		return
 	}
 	if err = setKeepAlive(p.fd, c.KeepAlive); err != nil {
+		syscall.Close(p.fd)
 		err = fmt.Errorf("tcp: setKeepAlive: %v", err)
 		return
 	}
 
 	//连接TCP地址
 	if err = syscall.Connect(p.fd, p.sockAddr); err != nil {
+		syscall.Close(p.fd)
 		err = fmt.Errorf("tcp: Connect: %v", os.NewSyscallError("connect", err))
+		return
+	}
+
+	//如果在sysSocket设置非阻塞，则Connect会返回	EINPROGRESS错误
+	if err = syscall.SetNonblock(p.fd, true); err != nil {
+		syscall.Close(p.fd)
+		err = fmt.Errorf("tcp: SetNonblock: %v", err)
 		return
 	}
 
